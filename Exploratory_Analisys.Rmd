@@ -1,0 +1,234 @@
+---
+title: "Data Science Capstone: Exploratory Data Analysis"
+author: "Giuseppe Nicosia Delorenzo"
+date: "March 2019"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+---
+
+```{r setup, include=FALSE }
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, cache = TRUE)
+```
+
+First of all, we load the packages
+
+```{r}
+library(kableExtra)
+library(tidyverse)
+library(tidytext)
+library(wordcloud2)
+```
+
+##Downloading and Unziping
+
+Now we Download and unzip the data.
+
+```{r}
+if(!file.exists("capstone_proyect.zip")){
+        download.file("https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip",
+                      "capstone_proyect.zip")
+}
+
+if(!dir.exists("final")){
+        unzip("capstone_proyect.zip")
+}
+
+```
+
+
+## Reading the Text Files
+
+After having download and unzipped the files in the working directory, we proceed to import them into R, and transform each table into the tible format, creating a new column with an identifier, in order to know from where does each line and word comes from.
+
+```{r}
+blogs <- read_lines("final/en_US/en_US.blogs.txt") 
+blogs <- tibble(text = "Blogs", lines = blogs)
+
+twitter <- read_lines("final/en_US/en_US.twitter.txt") 
+twitter <- tibble(text = "Twitter", lines = twitter)
+
+news <- read_lines("final/en_US/en_US.news.txt") 
+news <- tibble(text = "News",lines = news)
+
+bad_words <- read_lines("full-list-of-bad-words_text-file_2018_07_30.txt", skip = 13)
+bad_words <- tibble(word = bad_words)
+```
+
+## Basic Summary Statistics about each File's Content
+
+Then we observe some of the basic statistics of the imported data.
+
+```{r}
+l_count <- rbind(nrow(blogs),
+                 nrow(twitter),
+                 nrow(news))
+
+w_count <- rbind(nchar(blogs$lines) %>% sum(),
+                nchar(twitter$lines) %>% sum(),
+                nchar(news$lines) %>% sum())
+
+w_count_max <- rbind(nchar(blogs$lines) %>% max(),
+                     nchar(twitter$lines) %>% max(),
+                     nchar(news$lines) %>% max())
+
+w_count_mean <- rbind(nchar(blogs$lines) %>% mean(),
+                     nchar(twitter$lines) %>% mean(),
+                     nchar(news$lines) %>% mean())
+
+quick_look <- tibble(Files = c("Blogs", "Twitter", "News"),
+                     "Nº of Lines" = l_count,
+                     "Nº of Words" = w_count,
+                     "Max Nº of Words" = w_count_max,
+                     "Avg Nº of words" = w_count_mean)
+
+quick_look %>% kable(format.args = list(big.mark = ",")) %>%
+        kable_styling(bootstrap_options = c("striped","hover", "responsive"))
+```
+
+It's interesting that even thought the Blogs are the source with less lines, they have the higher maximum number of words per line. In contrast, Twitter has the opposite behavior, and the News is an intermediate case. And the average statistics have the same pattern.
+
+## Samplig and Pre Processing the Data
+
+As the entire data is too large, and working it in its full length would bring up insufficient memory issues when processing the n-grams, we'll work with a random sample of 25 % of the original data, and it will be bound in a single table.
+
+```{r}
+all <- bind_rows(sample_frac(blogs, size = 0.25),
+                 sample_frac(twitter, size = 0.25),
+                 sample_frac(news, size = 0.25))
+
+all_w <- all %>% unnest_tokens(output = word,
+                               input = lines, 
+                               to_lower = TRUE, 
+                               strip_punct = TRUE, 
+                               strip_numeric = TRUE) %>%
+                                anti_join(stop_words) %>%
+                                anti_join(bad_words)
+```
+
+Then we proceeded with the tokenization of the sentences to extract the words in a tidy format, where each column is a variable, and each row is an observation. In order to clean the raw data we lowered every case of every word, removed the punctuation symbols, as well as any numeric. Later on, we removed the stop words for the English language (list included in the tidy text package), and the bad words (list downloaded from http://www.freewebheaders.com/full-list-of-bad-words-banned-by-google/). 
+
+But words alone say very little, so to see a more contextualized analysis we will look at n-grams, Bigrams and Trigrams to be precise. We'll have to tokenize by groups of words and the separate such words in order to be able to clean the corpus, and later they'll be reunited and counted.
+
+```{r}
+all_bigram <- all %>% unnest_tokens(output = bigram,
+                                    input = lines,
+                                    token = "ngrams",
+                                    n = 2)
+
+all_bigram_filtered <- all_bigram %>% separate(col = bigram, into = c("word1", "word2"), sep = " ") %>% 
+        filter(
+                !word1 %in% stop_words$word,  #remove any stop word in word 1
+                !word2 %in% stop_words$word,  #remove any stop word in word 2
+                !word1 %in% bad_words$word,  #remove any bad word in word 1
+                !word2 %in% bad_words$word,  #remove any bad word in word 2
+                !str_detect(word1,"[[:digit:]]"),  #remove any number in word 1
+                !str_detect(word2,"[[:digit:]]"),  #remove any number in word 2
+                !str_detect(word1, "[[:punct:]]"),  #remove any punctuation symbol in word 1
+                !str_detect(word2, "[[:punct:]]")) %>% #remove any punctuation symbol in word 2
+        unite("bigram", c(word1, word2), sep = " ") %>%
+        count(text, bigram, sort = TRUE) %>% ungroup()
+```
+
+And we repeat the same process for the Trigrams
+
+```{r}
+all_trigram <- all %>% unnest_tokens(output = trigram,
+                                    input = lines,
+                                    token = "ngrams",
+                                    n = 3)
+
+all_trigram_filtered <- all_trigram %>% separate(col = trigram, into = c("word1", "word2", "word3"), sep = " ") %>% 
+        filter(
+                !word1 %in% stop_words$word,  #remove any stop word in word 1
+                !word2 %in% stop_words$word,  #remove any stop word in word 2
+                !word3 %in% stop_words$word,  #remove any stop word in word 3
+                !word1 %in% bad_words$word,  #remove any bad word in word 1
+                !word2 %in% bad_words$word,  #remove any bad word in word 2
+                !word3 %in% bad_words$word,  #remove any bad word in word 3
+                !str_detect(word1,"[[:digit:]]"),  #remove any number in word 1
+                !str_detect(word2,"[[:digit:]]"),  #remove any number in word 2
+                !str_detect(word3,"[[:digit:]]"),  #remove any number in word 3
+                !str_detect(word1, "[[:punct:]]"),  #remove any punctuation symbol in word 1
+                !str_detect(word2, "[[:punct:]]"), #remove any punctuation symbol in word 2
+                !str_detect(word3, "[[:punct:]]")) %>% #remove any punctuation symbol in word 3
+        unite("trigram", c(word1, word2, word3), sep = " ") %>%
+        count(text, trigram, sort = TRUE) %>% ungroup()
+```
+
+
+## Exploratory Data Analisys
+
+### Unigrams
+
+After plotting an histogram with the counts of each word , it appears that they have a long tail distribution, where there are very few word repeated more than 10,000 times.
+
+```{r}
+all_w_count <- all_w %>% count(text, word, sort = TRUE)
+
+all_w_count %>% ggplot(aes(x = n, fill = text)) + 
+        geom_histogram(show.legend = FALSE) +
+        geom_rug() +
+        scale_x_log10() +
+        facet_wrap(~text, nrow = 3, scales = "free")
+```
+
+Later, we can see the top 15 words for each source, and we can see that some words are common between sources.
+
+```{r}
+all_w_count %>% group_by(text) %>% top_n(15) %>% ungroup() %>% 
+        ggplot(aes(reorder(word,n, sum), n, fill = text))+
+        geom_col(show.legend = FALSE)+
+        facet_wrap(~text, ncol = 3, scales = "free")+
+        labs(x = NULL, y = "Frequency", title = "Top 15 words per Source")+
+        theme(plot.title = element_text(hjust = 0.5))+
+        coord_flip()
+```
+ 
+And just for fun let's see which are the 100 most used words
+
+```{r}
+all_w_count  %>% top_n(100) %>% select(word,n) %>% wordcloud2(backgroundColor = "black")
+```
+
+### Brigrams
+
+We can see that the results are quite different from the unigram section, we can observe many city names and places, among other things.
+
+```{r}
+all_bigram_filtered%>% group_by(text) %>% top_n(15) %>% ungroup() %>% 
+        ggplot(aes(reorder(bigram,n, sum), n, fill = text))+
+        geom_col(show.legend = FALSE)+
+        facet_wrap(~text, ncol = 3, scales = "free")+
+        labs(x = NULL, y = "Frequency", title = "Top 15 Bigrams per Source")+
+        theme(plot.title = element_text(hjust = 0.5))+
+        coord_flip()
+```
+
+```{r}
+all_bigram_filtered %>% top_n(100) %>% select(bigram,n) %>% wordcloud2(backgroundColor = "orange")
+```
+
+### Trigrams
+
+In the trigrams we see that the results changed again, and shows us that the text might need further cleaning in order to remove phrases like "blah blah blah" and "cake cake cake". And it's interesting to see that the maximum word frequency in the Blogs is 1/3 of the one observed in the News, and 1/4 of the one seen in twitter-
+
+```{r}
+all_trigram_filtered%>% group_by(text) %>% top_n(15) %>% ungroup() %>% 
+        ggplot(aes(reorder(trigram,n, sum), n, fill = text))+
+        geom_col(show.legend = FALSE)+
+        facet_wrap(~text, ncol = 3, scales = "free")+
+        labs(x = NULL, y = "Frequency", title = "Top 15 Trigrams per Source")+
+        theme(plot.title = element_text(hjust = 0.5))+
+        coord_flip()
+```
+
+
+```{r}
+all_trigram_filtered %>% top_n(100) %>% select(trigram,n) %>% wordcloud2(backgroundColor = "black")
+
+```
+
+## Goals For the App
+I would  like to make an app capable of predicting the next word an user would write, based on the previous words he wrote. In order to do this the most likely procedure would be to create unigrams, bigrams and trigrams dictionaries, so that there´re two columns, the first with a string of the n-1 words, and second one with the remaining word. So that it gives a predicted word based on the probability obtained from the dictionary. 
